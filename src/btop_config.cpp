@@ -39,6 +39,7 @@ tab-size = 4
 
 using std::array;
 using std::atomic;
+using std::stoi;
 using std::string_view;
 
 namespace fs = std::filesystem;

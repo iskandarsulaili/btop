@@ -17,13 +17,16 @@ tab-size = 4
 */
 
 #include <algorithm>
+#include <array>
 #include <charconv>
 #include <cmath>
+#include <cstdio>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <future>
 #include <iterator>
+#include <memory>
 #include <numeric>
 #include <optional>
 #include <ranges>
@@ -165,10 +168,19 @@ namespace Cpu {
 		int64_t crit{};
 	};
 
+	struct FanSensor {
+		fs::path path;
+		string name;
+	};
+
+	static auto read_ipmi_fan_rpm() -> long long;
+	static auto estimate_fan_percent(long long rpm) -> int;
+
 	std::unordered_map<string, Sensor> found_sensors;
 	string cpu_sensor;
 	vector<string> core_sensors;
 	std::unordered_map<int, int> core_mapping;
+	std::optional<FanSensor> cpu_fan_sensor;
 }
 
 #if defined(GPU_SUPPORT)
@@ -465,6 +477,122 @@ namespace Cpu {
 		return name;
 	}
 
+	static auto find_fan_candidates() -> vector<FanSensor> {
+		vector<FanSensor> candidates;
+		vector<fs::path> scanned_paths;
+
+		if (not fs::exists(fs::path("/sys/class/hwmon")) or access("/sys/class/hwmon", R_OK) == -1) {
+			return candidates;
+		}
+
+		for (const auto& dir : fs::directory_iterator(fs::path("/sys/class/hwmon"))) {
+			try {
+				const auto add_unique_path = [&](const fs::path& path) {
+					if (not fs::exists(path) or v_contains(scanned_paths, path)) return;
+					for (const auto& file : fs::directory_iterator(path)) {
+						const auto filename = file.path().filename().string();
+						if (filename.starts_with("fan") and filename.ends_with("_input")) {
+							scanned_paths.push_back(path);
+							return;
+						}
+					}
+				};
+
+				const auto hwmon_path = fs::canonical(dir.path());
+				add_unique_path(hwmon_path);
+				if (fs::exists(hwmon_path / "device") and fs::is_directory(hwmon_path / "device")) {
+					add_unique_path(hwmon_path / "device");
+				}
+			}
+			catch (...) {}
+		}
+
+		for (const auto& path : scanned_paths) {
+			const string pname = readfile(path / "name", path.filename());
+			for (const auto& file : fs::directory_iterator(path)) {
+				const auto filename = file.path().filename().string();
+				if (not filename.starts_with("fan") or not filename.ends_with("_input")) continue;
+
+				const auto file_id = atoi(filename.c_str() + 3);
+				auto basepath = file.path().string();
+				basepath.erase(basepath.find("input"), string("input").length());
+				const string label = readfile(fs::path(basepath + "label"), "fan" + to_string(file_id));
+				candidates.push_back(FanSensor { fs::path(basepath + "input"), pname + "/" + label });
+			}
+		}
+
+		return candidates;
+	}
+
+	static auto find_cpu_fan() -> std::optional<FanSensor> {
+		const auto candidates = find_fan_candidates();
+		if (candidates.empty()) return std::nullopt;
+		if (candidates.size() == 1) return candidates.front();
+
+		const auto cpu_temp_path = found_sensors.contains(cpu_sensor) ? found_sensors.at(cpu_sensor).path.parent_path() : fs::path {};
+		int best_score = std::numeric_limits<int>::min();
+		std::optional<FanSensor> best_candidate;
+
+		for (const auto& candidate : candidates) {
+			const auto lower_name = str_to_lower(candidate.name);
+			int score = 0;
+			if (not cpu_temp_path.empty() and candidate.path.parent_path() == cpu_temp_path) score += 100;
+			if (lower_name.contains("cpu") or lower_name.contains("proc") or lower_name.contains("processor")) score += 80;
+			if (lower_name.contains("pump")) score -= 100;
+			if (lower_name.ends_with("/fan1")) score += 5;
+			if (score > best_score) {
+				best_score = score;
+				best_candidate = candidate;
+			}
+		}
+
+		if (best_score <= 0) return std::nullopt;
+		return best_candidate;
+	}
+
+	static auto read_ipmi_fan_rpm() -> long long {
+		static long long last_read = 0;
+		static long long cached_rpm = -1;
+		const auto now = get_monotonicTimeUSec();
+		const auto poll_interval_us = static_cast<long long>(Config::getI("update_ms")) * 1000LL;
+		if (cached_rpm >= 0 and now - last_read < poll_interval_us) return cached_rpm;
+		last_read = now;
+
+		auto pipe = std::unique_ptr<FILE, decltype(&pclose)>(popen("/usr/bin/ipmitool sdr type Fan 2>/dev/null", "r"), pclose);
+		if (not pipe) return cached_rpm = -1;
+
+		std::array<char, 512> buffer {};
+		long long rpm_sum = 0;
+		int rpm_count = 0;
+		while (fgets(buffer.data(), buffer.size(), pipe.get()) != nullptr) {
+			string line { buffer.data() };
+			const auto lower_line = str_to_lower(line);
+			if (not lower_line.starts_with("fan") or not lower_line.contains("rpm")) continue;
+
+			const auto last_separator = line.rfind('|');
+			if (last_separator == string::npos) continue;
+			const auto reading = trim(line.substr(last_separator + 1));
+			const auto digits_end = reading.find_first_not_of("0123456789");
+			if (digits_end == 0) continue;
+
+			const auto rpm = stoll(string { reading.substr(0, digits_end) });
+			if (rpm <= 0) continue;
+			rpm_sum += rpm;
+			rpm_count++;
+		}
+
+		if (rpm_count == 0) return cached_rpm = -1;
+		return cached_rpm = rpm_sum / rpm_count;
+	}
+
+	static auto estimate_fan_percent(long long rpm) -> int {
+		if (rpm < 0) return -1;
+		constexpr long long fan_min_rpm = 2400;
+		constexpr long long fan_max_rpm = 16800;
+		const auto clamped_rpm = std::clamp(rpm, fan_min_rpm, fan_max_rpm);
+		return static_cast<int>(std::llround((clamped_rpm - fan_min_rpm) * 100.0 / (fan_max_rpm - fan_min_rpm)));
+	}
+
 	bool get_sensors() {
 		bool got_cpu = false, got_coretemp = false;
 		vector<fs::path> search_paths;
@@ -594,6 +722,10 @@ namespace Cpu {
 			}
 		}
 
+		cpu_fan_sensor = find_cpu_fan();
+		current_cpu.fan_rpm = -1;
+		current_cpu.fan_percent = -1;
+
 		return not found_sensors.empty();
 	}
 
@@ -606,6 +738,14 @@ namespace Cpu {
 		current_cpu.temp.at(0).push_back(found_sensors.at(cpu_sensor).temp);
 		current_cpu.temp_max = found_sensors.at(cpu_sensor).crit;
 		if (current_cpu.temp.at(0).size() > 20) current_cpu.temp.at(0).pop_front();
+
+		if (cpu_fan_sensor.has_value()) {
+			current_cpu.fan_rpm = stoll(readfile(cpu_fan_sensor->path, "-1"));
+		}
+		else {
+			current_cpu.fan_rpm = read_ipmi_fan_rpm();
+		}
+		current_cpu.fan_percent = estimate_fan_percent(current_cpu.fan_rpm);
 
 		if (Config::getB("show_coretemp") and not cpu_temp_only) {
 			for (vector<string_view> done; const auto& sensor : core_sensors) {
@@ -1056,25 +1196,33 @@ namespace Cpu {
         auto stream = std::ifstream { "/sys/fs/cgroup/cpuset.cpus.effective" };
         auto buf = std::string { std::istreambuf_iterator<char> { stream }, {} };
 
+        std::vector<std::int32_t> active_cpus;
+
         if (buf.empty()) {
-            return std::views::iota(0, Shared::coreCount) | std::ranges::to<std::vector<std::int32_t>>();
+            active_cpus.reserve(Shared::coreCount);
+            for (std::int32_t i = 0; i < Shared::coreCount; ++i) {
+                active_cpus.push_back(i);
+            }
+            return active_cpus;
         }
 
-        return buf | std::views::split(',') | std::views::transform([](auto&& range) -> auto {
-                   auto view = std::string_view { range };
-                   auto dash = view.find('-');
+        for (auto&& range : buf | std::views::split(',')) {
+            auto view = std::string_view { range };
+            auto dash = view.find('-');
 
-                   if (dash == std::string_view::npos) {
-                       // Single CPU, return iota of single element
-                       auto value = to_int(view);
-                       return std::views::iota(value, value + 1);
-                   }
+            if (dash == std::string_view::npos) {
+                active_cpus.push_back(to_int(view));
+                continue;
+            }
 
-                   auto start = to_int(view.substr(0, dash));
-                   auto end = to_int(view.substr(dash + 1));
-                   return std::views::iota(start, end + 1);
-               }) |
-               std::views::join | std::ranges::to<std::vector<std::int32_t>>();
+            auto start = to_int(view.substr(0, dash));
+            auto end = to_int(view.substr(dash + 1));
+            for (auto value = start; value <= end; ++value) {
+                active_cpus.push_back(value);
+            }
+        }
+
+        return active_cpus;
     }
 
 	auto collect(bool no_update) -> cpu_info& {

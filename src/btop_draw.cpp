@@ -548,6 +548,7 @@ namespace Cpu {
 		if (Runner::stopping) return "";
 		if (force_redraw) redraw = true;
 		bool show_temps = (Config::getB("check_temp") and got_sensors);
+		bool show_fan = (show_temps and cpu.fan_percent >= 0);
 		bool show_watts = (Config::getB("show_cpu_watts") and supports_watts);
 		auto single_graph = Config::getB("cpu_single_graph");
 		bool hide_cores = show_temps and (cpu_temp_only or not Config::getB("show_coretemp"));
@@ -700,6 +701,9 @@ namespace Cpu {
 			#endif
 
 			int cpu_meter_width = b_width - (show_temps ? 23 - (b_column_size <= 1 and b_columns == 1 ? 6 : 0) : 11);
+			if (show_fan) {
+				cpu_meter_width -= 9;
+			}
 			if (show_watts) {
 				cpu_meter_width -= 6;
 			}
@@ -850,6 +854,9 @@ namespace Cpu {
 					out += ' ' + Theme::c("inactive_fg") + graph_bg * 5 + Mv::l(5) + temp_color
 						+ temp_graphs.at(0)(safeVal(cpu.temp, 0), data_same or redraw);
 				out += temp_color + rjust(to_string(temp), 4) + Theme::c("main_fg") + unit;
+				if (show_fan) {
+					out += Theme::c("main_fg") + fmt::format(" [~{:>2}%]", cpu.fan_percent);
+				}
 			}
 
 			if (show_watts) {

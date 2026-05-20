@@ -225,6 +225,8 @@ namespace Cpu {
 		vector<deque<long long>> core_percent;
 		vector<deque<long long>> temp;
 		long long temp_max = 0;
+		long long fan_rpm = -1;
+		int fan_percent = -1;
 		array<double, 3> load_avg;
 		float usage_watts = 0;
 		std::optional<std::vector<std::int32_t>> active_cpus;
