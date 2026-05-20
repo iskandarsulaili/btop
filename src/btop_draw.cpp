@@ -1533,7 +1533,7 @@ namespace Net {
 		//? IP or device address
 		if (not ip_addr.empty() and cmp_greater(width - i_size - 36, ip_addr.size())) {
 			const string internet_indicator = net.internet_connected
-				? Theme::g("cpu").at(100) + "●" + Theme::c("title")
+				? Theme::g("cpu").at(0) + "●" + Theme::c("title")
 				: Theme::g("used").at(100) + "○" + Theme::c("title");
 			out += Mv::to(y, x + 8) + title_left + Theme::c("title") + Fx::b + ip_addr + ' ' + internet_indicator + title_right;
 		}
