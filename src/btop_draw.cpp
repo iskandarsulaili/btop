@@ -1714,6 +1714,15 @@ namespace Proc {
 		if (force_redraw) redraw = true;
 		string out;
 		out.reserve(width * height);
+#if defined(GPU_SUPPORT)
+		int gpu_column_count = 0;
+		for (const auto& p : plist) {
+			gpu_column_count = max(gpu_column_count, static_cast<int>(p.gpu_percent.size()));
+		}
+		const int gpu_index_width = gpu_column_count > 0 ? static_cast<int>(to_string(gpu_column_count - 1).size()) : 0;
+		const int gpu_column_width = gpu_column_count > 0 ? 5 + gpu_index_width : 0;
+		const int gpu_columns_extra = gpu_column_count * (gpu_column_width + 1);
+#endif
 
 		//? Move current selection/view to the selected process when a process should be followed
 		//? Restore view and selection to the detailed view process when detailed view is closed
@@ -1786,9 +1795,15 @@ namespace Proc {
 			//? Adapt sizes of text fields
 			user_size = (width < 75 ? 5 : 10);
 			thread_size = (width < 75 ? - 1 : 4);
+#if defined(GPU_SUPPORT)
+			prog_size = (width > 70 ? 16 : ( width > 55 ? 8 : width - user_size - thread_size - 33 - gpu_columns_extra));
+			cmd_size = (width > 55 ? width - prog_size - user_size - thread_size - 33 - gpu_columns_extra : -1);
+			tree_size = width - user_size - thread_size - 23 - gpu_columns_extra;
+#else
 			prog_size = (width > 70 ? 16 : ( width > 55 ? 8 : width - user_size - thread_size - 33));
 			cmd_size = (width > 55 ? width - prog_size - user_size - thread_size - 33 : -1);
 			tree_size = width - user_size - thread_size - 23;
+#endif
 			if (not show_graphs) {
 				cmd_size += 5;
 				tree_size += 5;
@@ -1972,7 +1987,13 @@ namespace Proc {
 			out += (thread_size > 0 ? Mv::l(4) + "Threads: " : "")
 					+ ljust("User:", user_size) + ' '
 					+ rjust((mem_bytes ? "MemB" : "Mem%"), 5) + ' '
-					+ rjust("Cpu%", (show_graphs ? 10 : 5)) + Fx::ub;
+					+ rjust("Cpu%", (show_graphs ? 10 : 5));
+#if defined(GPU_SUPPORT)
+			for (int gpu_index = 0; gpu_index < gpu_column_count; ++gpu_index) {
+				out += ' ' + rjust("Gpu%-" + to_string(gpu_index), gpu_column_width);
+			}
+#endif
+			out += Fx::ub;
 		}
 		//* End of redraw block
 
@@ -2147,7 +2168,19 @@ namespace Proc {
 				+ m_color + rjust(mem_str, 5) + end + ' '
 				+ (is_selected or is_followed ? "" : Theme::c("inactive_fg")) + (show_graphs ? graph_bg * 5: "")
 				+ (p_graphs.contains(p.pid) ? Mv::l(5) + c_color + p_graphs.at(p.pid)({(p.cpu_p >= 0.1 and p.cpu_p < 5 ? 5ll : (long long)round(p.cpu_p))}, data_same) : "") + end + ' '
-				+ c_color + rjust(cpu_str, 4) + "  " + end;
+				+ c_color + rjust(cpu_str, 4) + end;
+#if defined(GPU_SUPPORT)
+			for (int gpu_index = 0; gpu_index < gpu_column_count; ++gpu_index) {
+				string gpu_str = "-";
+				string gpu_color = is_selected or is_followed ? "" : Theme::c("inactive_fg");
+				if (gpu_index < static_cast<int>(p.gpu_percent.size()) and p.gpu_percent[gpu_index] >= 0) {
+					gpu_str = to_string(p.gpu_percent[gpu_index]);
+					gpu_color = c_color + Theme::g("cpu").at(clamp(p.gpu_percent[gpu_index], 0ll, 100ll));
+				}
+				out += ' ' + gpu_color + rjust(gpu_str, gpu_column_width) + end;
+			}
+#endif
+			out += "  ";
 			if (lc++ > height - 5) break;
 			else if (lc > height - 5 and proc_banner_shown) break;
 		}

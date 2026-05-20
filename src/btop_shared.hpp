@@ -407,6 +407,9 @@ namespace Proc {
 		uint64_t mem{};
 		double cpu_p{};         // defaults to = 0.0
 		double cpu_c{};         // defaults to = 0.0
+#if defined(GPU_SUPPORT)
+		vector<long long> gpu_percent{};
+#endif
 		char state = '0';
 		int64_t p_nice{};
 		uint64_t ppid{};

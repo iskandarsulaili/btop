@@ -30,6 +30,7 @@ tab-size = 4
 #include <numeric>
 #include <optional>
 #include <ranges>
+#include <sstream>
 #include <string_view>
 #include <unordered_map>
 #include <unordered_set>
@@ -3047,6 +3048,40 @@ namespace Proc {
 	static std::unordered_set<size_t> kernels_procs = {KTHREADD};
 	static std::unordered_set<size_t> dead_procs;
 
+#if defined(GPU_SUPPORT)
+	static auto collect_proc_gpu_usage() -> std::unordered_map<size_t, vector<long long>> {
+		std::unordered_map<size_t, vector<long long>> usage_by_pid;
+		if (Gpu::count <= 0 or not fs::exists("/usr/bin/nvidia-smi")) return usage_by_pid;
+
+		auto pipe = std::unique_ptr<FILE, decltype(&pclose)>(popen("/usr/bin/nvidia-smi pmon -c 1 2>/dev/null", "r"), pclose);
+		if (not pipe) return usage_by_pid;
+
+		std::array<char, 512> buffer {};
+		while (fgets(buffer.data(), static_cast<int>(buffer.size()), pipe.get()) != nullptr) {
+			string line {buffer.data()};
+			if (line.empty() or line.front() == '#') continue;
+
+			std::istringstream iss(line);
+			int gpu_index = -1;
+			string pid_str, type, sm_str, mem_str, enc_str, dec_str;
+			if (not (iss >> gpu_index >> pid_str >> type >> sm_str >> mem_str >> enc_str >> dec_str)) continue;
+			if (gpu_index < 0 or gpu_index >= Gpu::count or pid_str == "-" or sm_str == "-") continue;
+
+			size_t pid = 0;
+			int sm = -1;
+			auto [pid_ptr, pid_ec] = std::from_chars(pid_str.data(), pid_str.data() + pid_str.size(), pid);
+			auto [sm_ptr, sm_ec] = std::from_chars(sm_str.data(), sm_str.data() + sm_str.size(), sm);
+			if (pid_ec != std::errc{} or sm_ec != std::errc{}) continue;
+
+			auto& usage = usage_by_pid[pid];
+			if (cmp_less(usage.size(), static_cast<size_t>(Gpu::count))) usage.resize(Gpu::count, -1);
+			usage.at(gpu_index) = clamp(sm, 0, 100);
+		}
+
+		return usage_by_pid;
+	}
+#endif
+
 	//* Get detailed info for selected process
 	static void _collect_details(const size_t pid, const uint64_t uptime, vector<proc_info>& procs) {
 		fs::path pid_path = Shared::procPath / std::to_string(pid);
@@ -3199,6 +3234,10 @@ namespace Proc {
 
 			auto totalMem = Mem::get_totalMem();
 			int totalMem_len = to_string(totalMem >> 10).size();
+#if defined(GPU_SUPPORT)
+			const bool has_proc_gpu_support = Gpu::count > 0 and fs::exists("/usr/bin/nvidia-smi");
+			auto proc_gpu_usage = has_proc_gpu_support ? collect_proc_gpu_usage() : std::unordered_map<size_t, vector<long long>> {};
+#endif
 
 			//? Update uid_user map if /etc/passwd changed since last run
 			if (not Shared::passwd_path.empty() and fs::last_write_time(Shared::passwd_path) != passwd_time) {
@@ -3266,6 +3305,19 @@ namespace Proc {
 				else if (dead_procs.contains(pid)) continue;
 
 				auto& new_proc = *find_old;
+#if defined(GPU_SUPPORT)
+				if (has_proc_gpu_support) {
+					new_proc.gpu_percent.assign(Gpu::count, -1);
+					if (auto gpu_it = proc_gpu_usage.find(pid); gpu_it != proc_gpu_usage.end()) {
+						for (size_t gpu_index = 0; gpu_index < min(new_proc.gpu_percent.size(), gpu_it->second.size()); ++gpu_index) {
+							new_proc.gpu_percent[gpu_index] = gpu_it->second[gpu_index];
+						}
+					}
+				}
+				else {
+					new_proc.gpu_percent.clear();
+				}
+#endif
 
 				//? Get program name, command and username
 				if (no_cache) {
