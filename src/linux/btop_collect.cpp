@@ -2821,6 +2821,12 @@ namespace Net {
 	bool rescale{true};
 	uint64_t timestamp{};
 
+	static auto interface_has_internet(const string& iface) -> bool {
+		if (iface.empty()) return false;
+		const string command = "/bin/ping -I " + iface + " -n -c1 -W1 8.8.8.8 >/dev/null 2>&1";
+		return std::system(command.c_str()) == 0;
+	}
+
 	auto collect(bool no_update) -> net_info& {
 		if (Runner::stopping) return empty_net;
 		auto& net = current_net;
@@ -2982,6 +2988,10 @@ namespace Net {
 				else if (sorted_interfaces.empty()) return empty_net;
 
 			}
+		}
+
+		if (!selected_iface.empty()) {
+			net[selected_iface].internet_connected = interface_has_internet(selected_iface);
 		}
 
 		//? Calculate max scale for graphs if needed

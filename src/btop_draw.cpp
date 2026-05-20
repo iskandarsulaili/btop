@@ -855,7 +855,8 @@ namespace Cpu {
 						+ temp_graphs.at(0)(safeVal(cpu.temp, 0), data_same or redraw);
 				out += temp_color + rjust(to_string(temp), 4) + Theme::c("main_fg") + unit;
 				if (show_fan) {
-					out += Theme::c("main_fg") + fmt::format(" [~{:>2}%]", cpu.fan_percent);
+					out += Theme::c("main_fg") + " [~" + Theme::c("available_end") + Fx::b + fmt::format("{:>2}", cpu.fan_percent)
+						+ Fx::ub + Theme::c("main_fg") + "%]";
 				}
 			}
 
@@ -1531,7 +1532,10 @@ namespace Net {
 
 		//? IP or device address
 		if (not ip_addr.empty() and cmp_greater(width - i_size - 36, ip_addr.size())) {
-			out += Mv::to(y, x + 8) + title_left + Theme::c("title") + Fx::b + ip_addr + title_right;
+			const string internet_indicator = net.internet_connected
+				? Theme::g("cpu").at(100) + "●" + Theme::c("title")
+				: Theme::g("used").at(100) + "○" + Theme::c("title");
+			out += Mv::to(y, x + 8) + title_left + Theme::c("title") + Fx::b + ip_addr + ' ' + internet_indicator + title_right;
 		}
 
 		//? Graphs and stats

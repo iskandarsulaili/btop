@@ -328,6 +328,7 @@ namespace Net {
 		string ipv4{};      // defaults to ""
 		string ipv6{};      // defaults to ""
 		bool connected{};
+		bool internet_connected{};
 	};
 
 	class IfAddrsPtr {
