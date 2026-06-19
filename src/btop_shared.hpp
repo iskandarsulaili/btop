@@ -51,6 +51,10 @@ using std::vector;
 
 using namespace std::literals; // for operator""s
 
+namespace Tools {
+	class atomic_waiting_lock;
+}
+
 void term_resize(bool force=false);
 void banner_gen();
 
@@ -71,7 +75,7 @@ namespace Global {
 }
 
 namespace Runner {
-	extern atomic<bool> active;
+	extern Tools::atomic_waiting_lock active;
 	extern atomic<bool> reading;
 	extern atomic<bool> stopping;
 	extern atomic<bool> redraw;
@@ -181,6 +185,9 @@ namespace Gpu {
 		extern bool shutdown();
 	}
 	namespace Rsmi {
+		extern bool shutdown();
+	}
+	namespace Asysfs {
 		extern bool shutdown();
 	}
 	#ifdef __APPLE__
@@ -467,6 +474,9 @@ namespace Proc {
 
 	//* Toggle collapse/expand of all tree entries
 	void toggle_tree_collapse(std::vector<proc_info>& current_procs);
+
+	//* Auto-collapse processes with many direct children when entering tree mode
+	void _auto_collapse_oversized(std::vector<proc_info>& current_procs, const bool tree_mode_change);
 }
 
 /// Detect container engine.
