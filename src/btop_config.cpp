@@ -48,6 +48,24 @@ namespace rng = std::ranges;
 using namespace std::literals;
 using namespace Tools;
 
+const vector<string> Config::valid_graph_symbols = { "braille", "block", "tty" };
+const vector<string> Config::valid_graph_symbols_def = { "default", "braille", "block", "tty" };
+const vector<string> Config::valid_boxes = {
+	"cpu", "mem", "net", "proc"
+#ifdef GPU_SUPPORT
+	,"gpu0", "gpu1", "gpu2", "gpu3", "gpu4", "gpu5"
+#endif
+};
+const vector<string> Config::temp_scales = { "celsius", "fahrenheit", "kelvin", "rankine" };
+#ifdef __linux__
+const vector<string> Config::freq_modes = { "first", "range", "lowest", "highest", "average" };
+#endif
+#ifdef GPU_SUPPORT
+const vector<string> Config::show_gpu_values = { "Auto", "On", "Off" };
+#endif
+const vector<string> Config::base_10_bitrate_values = { "Auto", "True", "False" };
+const vector<string> Config::disable_preset_options = { "Off", "Default", "Custom", "All" };
+
 //* Functions and variables for reading and writing the btop config file
 namespace Config {
 
@@ -131,6 +149,9 @@ namespace Config {
 		{"proc_follow_detailed",	"#* Should the process list follow the selected process when detailed view is open."},
 
 		{"proc_aggregate",		"#* In tree-view, always accumulate child process resources in the parent process."},
+
+		{"proc_tree_auto_collapse", "#* In tree-view, auto-collapse processes with this many or more direct children when\n"
+									"#* entering tree mode. 0 to disable. Useful for collapsing multi-process apps like browsers."},
 
 		{"keep_dead_proc_usage", "#* Should cpu and memory usage display be preserved for dead processes when paused."},
 
@@ -365,6 +386,7 @@ namespace Config {
 		{"update_ms", 2000},
 		{"net_download", 100},
 		{"net_upload", 100},
+		{"proc_tree_auto_collapse", 0},
 		{"detailed_pid", 0},
 		{"restore_detailed_pid", 0},
 		{"selected_pid", 0},
@@ -558,6 +580,12 @@ namespace Config {
 
 		else if (name == "update_ms" and i_value > ONE_DAY_MILLIS)
 			validError = fmt::format("Config value update_ms set too high (>{}).", ONE_DAY_MILLIS);
+
+		else if (name == "proc_tree_auto_collapse" and i_value < 0)
+			validError = "Config value proc_tree_auto_collapse must be >= 0.";
+
+		else if (name == "proc_tree_auto_collapse" and i_value > 10000)
+			validError = "Config value proc_tree_auto_collapse set too high (>10000).";
 
 		else
 			return true;

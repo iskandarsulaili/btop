@@ -42,14 +42,14 @@ jobs:
       matrix:
         compiler: ["clang++", "g++"]
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           persist-credentials: false
 
       - name: Compile
-        uses: vmactions/freebsd-vm@d1e65811565151536c0c894fff74f06351ed26e6 # v1.4.5
+        uses: vmactions/freebsd-vm@5a72679103d223925653750faa878a143340fbd0 # v1.5.0
         with:
-          release: '15.0'
+          release: '15.1'
           usesh: true
           prepare: |
             pkg install -y gmake gcc15 coreutils git lowdown
