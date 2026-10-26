@@ -234,6 +234,7 @@ namespace Cpu {
 		long long temp_max = 0;
 		long long fan_rpm = -1;
 		int fan_percent = -1;
+		int system_watt = -1;
 		array<double, 3> load_avg;
 		float usage_watts = 0;
 		std::optional<std::vector<std::int32_t>> active_cpus;

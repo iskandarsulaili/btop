@@ -576,6 +576,7 @@ namespace Cpu {
 		if (force_redraw) redraw = true;
 		bool show_temps = (Config::getB("check_temp") and got_sensors);
 		bool show_fan = (show_temps and cpu.fan_percent >= 0);
+		bool show_watt = (show_temps and cpu.system_watt >= 0);
 		bool show_watts = (Config::getB("show_cpu_watts") and supports_watts);
 		auto single_graph = Config::getB("cpu_single_graph");
 		bool hide_cores = show_temps and (cpu_temp_only or not Config::getB("show_coretemp"));
@@ -888,6 +889,10 @@ namespace Cpu {
 				if (show_fan) {
 					out += Theme::c("main_fg") + " [~" + Theme::c("available_end") + Fx::b + fmt::format("{:>2}", cpu.fan_percent)
 						+ Fx::ub + Theme::c("main_fg") + "%]";
+				}
+				if (show_watt) {
+					out += Theme::c("main_fg") + " [" + Theme::c("available_end") + Fx::b + fmt::format("{:>3}", cpu.system_watt)
+						+ Fx::ub + Theme::c("main_fg") + "W]";
 				}
 			}
 

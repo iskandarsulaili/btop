@@ -176,6 +176,7 @@ namespace Cpu {
 
 	static auto read_ipmi_fan_rpm() -> long long;
 	static auto estimate_fan_percent(long long rpm) -> int;
+	static auto read_ipmi_system_watt() -> int;
 
 	std::unordered_map<string, Sensor> found_sensors;
 	string cpu_sensor;
@@ -618,6 +619,54 @@ namespace Cpu {
 		return static_cast<int>(std::llround((clamped_rpm - fan_min_rpm) * 100.0 / (fan_max_rpm - fan_min_rpm)));
 	}
 
+	//* Whole-system power draw in watts, straight from the BMC (iDRAC DCMI).
+	//* This is the total the PSU actually has to supply (CPUs + RAM + GPUs +
+	//* drives + fans) and is the number that matters on a server whose power
+	//* budget is the limiting factor -- it is not the CPU package watts that
+	//* "show_cpu_watts" reads from RAPL/hwmon.
+	//*
+	//* DCMI is used instead of the SDR repository on purpose: on a PowerEdge the
+	//* per-call cost is ~0.06s for "dcmi power reading" versus ~1.4s for
+	//* "sdr type Fan" and ~7s for a full "sdr" dump, so this stays cheap enough
+	//* to poll every update. Returns -1 when IPMI is unavailable, which keeps
+	//* the indicator hidden on machines without a BMC.
+	static auto read_ipmi_system_watt() -> int {
+		static long long last_read = 0;
+		static int cached_watt = -1;
+		const auto now = get_monotonicTimeUSec();
+		const auto poll_interval_us = static_cast<long long>(Config::getI("update_ms")) * 1000LL;
+		// Throttle failures as well as successes so a box without IPMI does not
+		// fork a doomed ipmitool on every refresh.
+		if (last_read != 0 and now - last_read < poll_interval_us) return cached_watt;
+		last_read = now;
+
+		auto pipe = std::unique_ptr<FILE, decltype(&pclose)>(popen("/usr/bin/ipmitool dcmi power reading 2>/dev/null", "r"), pclose);
+		if (not pipe) return cached_watt = -1;
+
+		std::array<char, 256> buffer {};
+		cached_watt = -1;
+		while (fgets(buffer.data(), buffer.size(), pipe.get()) != nullptr) {
+			const string line { buffer.data() };
+			if (not str_to_lower(line).contains("instantaneous power reading")) continue;
+
+			const auto colon = line.find(':');
+			if (colon == string::npos) continue;
+			const auto reading = trim(line.substr(colon + 1));
+			const auto digits_end = reading.find_first_not_of("0123456789");
+			if (digits_end == 0) continue;
+
+			try {
+				const auto watt = std::stoll(string { reading.substr(0, digits_end) });
+				if (watt > 0 and watt < 100000) cached_watt = static_cast<int>(watt);
+			}
+			catch (const std::exception&) {
+				cached_watt = -1;
+			}
+			break;
+		}
+		return cached_watt;
+	}
+
 	bool get_sensors() {
 		bool got_cpu = false, got_coretemp = false;
 		vector<fs::path> search_paths;
@@ -750,6 +799,7 @@ namespace Cpu {
 		cpu_fan_sensor = find_cpu_fan();
 		current_cpu.fan_rpm = -1;
 		current_cpu.fan_percent = -1;
+		current_cpu.system_watt = -1;
 
 		return not found_sensors.empty();
 	}
@@ -771,6 +821,7 @@ namespace Cpu {
 			current_cpu.fan_rpm = read_ipmi_fan_rpm();
 		}
 		current_cpu.fan_percent = estimate_fan_percent(current_cpu.fan_rpm);
+		current_cpu.system_watt = read_ipmi_system_watt();
 
 		if (Config::getB("show_coretemp") and not cpu_temp_only) {
 			for (vector<string_view> done; const auto& sensor : core_sensors) {
